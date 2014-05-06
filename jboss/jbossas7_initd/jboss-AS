@@ -1,0 +1,610 @@
+#!/bin/sh
+#
+# JBoss standalone control script
+#
+# NOTE: Modified by jmorales
+#
+# chkconfig: 345 99 15
+# description: JBoss AS
+#
+## pidfile: /var/run/jboss-as/jboss.pid
+## config: /etc/sysconfig/${processname}.conf
+#
+# CONFIG OPTIONS:
+#   JBOSS_HOME
+#   JBOSS_PIDFILE
+#   JBOSS_CONSOLE_LOG
+#   STARTUP_WAIT
+#   SHUTDOWN_WAIT
+#   JBOSS_CONFIG
+#   JBOSS_SCRIPT
+#   JBOSS_USER
+#
+
+
+# Source function library.
+# So we have success,...
+. /etc/init.d/functions
+
+# When script is run from init tab, it is run as S99SUBSYS, so we extract real name
+if [ -L $0 ]
+then
+   REALSYS=$(readlink $0)
+   SUBSYS=${REALSYS##*/}  # $(basename $REALSYS)
+else
+   SUBSYS=$(basename $0)
+fi
+
+
+# Configuration can be defined in an outer sysconfig script
+# Must match script name. This enables for different scripts and configurations:
+# jboss-as
+# fsw1
+# jboss-node1
+# ....
+if [ -f ./${SUBSYS}.conf ]; then
+    . ./${SUBSYS}.conf
+fi
+#TODO: Uncomment below and remove above
+#if [ -f /etc/sysconfig/${SUBSYS} ]; then
+#    . /etc/sysconfig/${SUBSYS}
+#fi
+
+# Get the default values (for user root), if not defined in the config file
+: ${JBOSS_USER:=""}
+: ${STARTUP_WAIT:=180}
+: ${SHUTDOWN_WAIT:=30}
+: ${CHECK_STATUS_WITH_PORTS:=0} # 0 will use PORTS, 1 will use logs
+
+: ${JBOSS_PIDDIR:="/var/run/jboss-as"}
+: ${JBOSS_CONSOLE_LOGDIR:="/tmp"}
+: ${JBOSS_CONFIG:="standalone.xml"}
+#: ${java_exe:="/usr/java/latest/bin/java"}
+: ${SERVER_PORT:=9990}
+: ${LSOF_PATH:=/usr/sbin/lsof}
+
+JBOSS_PIDFILE=${JBOSS_PIDDIR}/$SUBSYS.pid
+JBOSS_CONSOLE_LOG=${JBOSS_CONSOLE_LOGDIR}/console-$SUBSYS.log
+JBOSS_SCRIPT=$JBOSS_HOME/bin/standalone.sh
+
+_date=$(date +%d%m%y-%H%M%S)
+
+
+SERVER_FINGERPRINT="Djboss.instance.Name=${SUBSYS}.*"
+
+echo_not_running() {
+  [ "$BOOTUP" = "color" ] && $MOVE_TO_COL
+  echo -n "["
+  [ "$BOOTUP" = "color" ] && $SETCOLOR_FAILURE
+  echo -n $"NOT RUNNING"
+  [ "$BOOTUP" = "color" ] && $SETCOLOR_NORMAL
+  echo -n "]"
+  echo -ne "\r"
+  return 1
+}
+
+echo_in_progress() {
+  [ "$BOOTUP" = "color" ] && $MOVE_TO_COL
+  echo -n "["
+  [ "$BOOTUP" = "color" ] && $SETCOLOR_WARNING
+  echo -n $"IN PROGRESS"
+  [ "$BOOTUP" = "color" ] && $SETCOLOR_NORMAL
+  echo -n "]"
+  echo -ne "\r"
+  return 1
+}
+
+#
+# Set how the user will execute
+#
+CMD_PREFIX=''
+if [ ! -z "$JBOSS_USER" ]; then
+  if [ -r /etc/rc.d/init.d/functions ]; then
+    CMD_PREFIX="daemon --user $JBOSS_USER"
+  else
+    CMD_PREFIX="su - $JBOSS_USER -c"
+  fi
+fi
+
+check_permissions() {
+  local abort=0
+
+#   if [ ! -d $wls_domain_home ] ; then
+#      echo ''
+#      echo -n '**WLS_DOMAIN_HOME '$wls_domain_home' not found**'
+#      echo_failure
+#      echo ''
+#   fi
+
+   local _user=$(whoami)
+
+   # TODO: Check that specified user exists
+
+   if [ ! -f $JBOSS_PIDFILE ] ; then
+      if [[ "$_user" == "${JBOSS_USER}" ]] ; then
+         if [ $(touch $JBOSS_PIDFILE 2>&1|grep "does not exist"|wc -l) -ne 0 ] ; then
+            echo ''
+            echo '** Pid file '$JBOSS_PIDFILE' is not writable by '$(whoami)' **'
+            echo_failure
+            echo ''
+            abort=1
+         fi
+      else
+        echo "$JBOSS_PIDFILE"
+         if [ $(su ${JBOSS_USER} -c "touch $JBOSS_PIDFILE 2>&1"|grep "does not exist"|wc -l) -ne 0 ] ; then
+            echo ''
+            echo '** Pid file '$JBOSS_PIDFILE' is not writable by '$(whoami)' **'
+            echo_failure
+            echo ''
+            abort=1
+         fi
+      fi
+   else
+      if [ ! -w $JBOSS_PIDFILE ] ; then
+         echo ''
+         echo '** Pid file '$JBOSS_PIDFILE' is not writable by '$(whoami)' **'
+         echo_failure
+         echo ''
+         abort=1
+      fi
+   fi
+
+   if [ ! -f $JBOSS_CONSOLE_LOG ] ; then
+      if [[ "$_user" == "${JBOSS_USER}" ]] ; then
+         if [ $(touch $JBOSS_CONSOLE_LOG 2>&1|egrep "Permission denied|does not exist"|wc -l) -ne 0 ] ; then
+            echo ''
+            echo '** Log file '$JBOSS_CONSOLE_LOG' is not writable by '$(whoami)' **'
+            echo_warning
+            echo ''
+            abort=1
+         fi
+      else
+         if [ $(su ${JBOSS_USER} -c "touch $JBOSS_CONSOLE_LOG 2>&1"|egrep "Permission denied|does not exist"|wc -l) -ne 0 ] ; then
+            echo ''
+            echo '** Log file '$JBOSS_CONSOLE_LOG' is not writable by '$(whoami)' **'
+            echo_warning
+            echo ''
+            abort=1
+         fi
+      fi
+   else
+      if [ ! -w $JBOSS_CONSOLE_LOG ] ; then
+         echo ''
+         echo '** Log file '$JBOSS_CONSOLE_LOG' is not writable by '$(whoami)' **'
+         echo_warning
+         echo ''
+      fi
+   fi
+
+#   if [ ! -e $java_exe ] ; then
+#      echo ''
+#      echo '** Java executable '$java_exe' does not exist **'
+#      echo_failure
+#      echo ''
+#      abort=1
+#   fi
+
+   if [ $abort -eq 1 ] ; then
+      echo -e "\n\n-------------\nTo start/stop this script must be run as root (directly, or with sudo), or configured for the user ${_user}\n\n"
+      exit 255
+   fi
+
+# TODO: Check rest of configuration options
+# Load Java configuration.
+# [ -r /etc/java/java.conf ] && . /etc/java/java.conf
+# export JAVA_HOME
+
+# Load JBoss AS init.d configuration.
+# if [ -z "$JBOSS_CONF" ]; then
+#   JBOSS_CONF="/etc/jboss-as/${SUBSYS}.conf"
+# fi
+
+# [ -r "$JBOSS_CONF" ] && . "${JBOSS_CONF}"
+
+# Set defaults.
+
+# if [ -z "$JBOSS_HOME" ]; then
+#   JBOSS_HOME=/usr/share/jboss-as
+# fi
+# export JBOSS_HOME
+
+# if [ -z "$JBOSS_PIDFILE" ]; then
+#   JBOSS_PIDFILE=/var/run/jboss-as/${SUBSYS}.pid
+# fi
+# export JBOSS_PIDFILE
+
+# if [ -z "$JBOSS_CONSOLE_LOG" ]; then
+#   JBOSS_CONSOLE_LOG=/var/log/jboss-as/console-${SUBSYS}.log
+# fi
+
+# if [ -z "$STARTUP_WAIT" ]; then
+#   STARTUP_WAIT=30
+# fi
+
+# if [ -z "$SHUTDOWN_WAIT" ]; then
+#   SHUTDOWN_WAIT=30
+# fi
+
+# if [ -z "$JBOSS_CONFIG" ]; then
+#   JBOSS_CONFIG=standalone.xml
+# fi
+
+# JBOSS_SCRIPT=$JBOSS_HOME/bin/standalone.sh
+}
+
+
+
+# Waits for the process to start based on listening ports
+# TODO: Change check_process_method
+# Arguments:
+#    $1: process fingerprint
+#    $2: timeout
+#
+#
+wait_to_start() {
+   local rc=1
+   local timeout=$2
+   if [ -z $timeout ] ; then
+      timeout=${STARTUP_WAIT}
+   fi
+   # 30 is enough space on the line for the . to appear without overlapping the status message
+   local sleep_period=$(($timeout/30))
+   [[ $sleep_period -eq 0 ]] && sleep_period=1
+   local fingerprint=$1
+   #echo 'Timeout: '$timeout ', Sleep period: '$sleep_period', Fingerprint: '$fingerprint
+   local starttime=$(date +%s)
+   while [ "$rc" == "1" ]
+   do
+      sleep $sleep_period
+      # For startup wait, we will use different methods to wait
+      if [ $CHECK_STATUS_WITH_PORTS -eq 1 ]
+      then
+        rc=$(check_process_ports $fingerprint)
+      else
+        rc=$(check_process_logs)
+      fi
+      local nowtime=$(date +%s)
+      local timediff=$(( $nowtime - $starttime ))
+      if [ $timediff -gt $timeout ] ; then
+         echo -n ' '
+         echo -n ' (Timed out after '$timeout' seconds ) '
+         break
+      fi
+      echo -n '.'
+   done
+   case "$rc" in
+      0|1)
+         echo_failure
+         rc=255
+         ;;
+      *)
+         echo_success
+         rc=0
+         ;;
+   esac
+   echo ''
+   return $rc
+}
+
+# check_process_ports will return 0 (not running), 1 (starting up) or other (port value)
+# This function will poll the process and based on the value returned (in rc) keep polling,
+# or after the predefined timeout period, kill the process by force.
+#
+# Arguments:
+#    $1: process fingerprint
+#    $2: timeout
+#
+#
+wait_to_die() {
+   rc=999
+   timeout=$2
+   if [ -z $timeout ] ; then
+      timeout=${SHUTDOWN_WAIT}
+   fi
+   # 30 is enough space on the line for the . to appear without overlapping the status message
+   sleep_period=$(($timeout/30))
+   [[ $sleep_period -eq 0 ]] && sleep_period=1
+   fingerprint=$1
+   starttime=$(date +%s)
+   while [ "$rc" != "0" ]
+   do
+      rc=$(check_process_ports $fingerprint)
+      nowtime=$(date +%s)
+      timediff=$(( $nowtime - $starttime ))
+      if [ $timediff -gt $timeout ] ; then
+         echo_warning
+         echo ''
+         echo -e '\tTimed out after '$timeout' seconds'
+         echo -en '\tSending SIGKILL. '
+         pkill -SIGKILL -f $fingerprint
+         sleep 5
+         rc=$(check_process_ports $1)
+         case "$rc" in
+            0)
+               echo -n 'Process killed'
+               echo_success
+               ;;
+            *)
+               echo -n "Process still running"
+               echo_failure
+         esac
+         echo ''
+         return 1
+      fi
+      echo -n '.'
+      if [ "$rc" != "0" ] ; then
+         sleep $sleep_period
+      fi
+   done
+   echo_success
+   echo ''
+   return 0
+}
+
+# Pass the 'fingerprint' of the process to check, which should be a regex to uniquely
+# identify the process in a pgrep -f call
+# Arguments:
+#   $1: process fingerprint
+#
+# Returns:
+#   0 - Process not running
+#   1 - Process running but not listening on any port
+# <ports> - the port(s) on which the process is listening
+check_process_ports () {
+   PID=$(pgrep -f $1)
+   if [ $? -eq 0 ] ; then
+      # If any port can be used, remove SERVER_PORT definition
+      PORT=$(pgrep -f $1|xargs -I'{}' $LSOF_PATH -nPp {}|grep LISTEN|awk -F ":" '{print $2}'|cut -d " " -f 1| grep ${SERVER_PORT} |sort -u|paste -s)
+      if [ -n "$PORT" ] ; then
+         echo $PORT
+      else
+         echo 1
+      fi
+   else
+      echo 0
+   fi
+}
+
+
+# Pass the 'fingerprint' of the process to check, which should be a regex to uniquely
+# identify the process in a pgrep -f call
+# Arguments:
+#   $1: process fingerprint
+#
+# Returns:
+#   0 - Process not running
+#   1 - Process running but not listening on any port
+check_process_logs () {
+  count=0
+  launched=0
+
+  until [ $count -gt $STARTUP_WAIT ]
+  do
+    grep 'JBAS015874:' $JBOSS_CONSOLE_LOG > /dev/null
+    if [ $? -eq 0 ] ; then
+      launched=1
+      break
+    fi
+    sleep 1
+    let count=$count+1;
+  done
+  echo launched
+}
+
+
+#
+#
+# Arguments:
+#    $1: process fingerprint
+#
+echo_process_status () {
+   rc=$(check_process_ports $1)
+   case "$rc" in
+      0)
+         echo_not_running
+         ;;
+      1)
+         echo_in_progress
+         ;;
+      *)
+         echo -n "Listening on port" $rc
+         echo_success
+   esac
+   echo ' '
+}
+
+# Echoes pid for Server fingerprint
+#
+# Arguments:
+#   $1: SERVER FINGERPRINT
+#
+echo_pid () {
+   local _ps_pid=$(pgrep -f $1)
+   local _pid_file_pid=$(cat ${JBOSS_PIDFILE} 2> /dev/null)
+
+   echo "** ${SUBSYS} Process pid: [${_ps_pid}]. Pid in file: [${_pid_file_pid}] **"
+}
+
+
+start() {
+   echo -n $"Starting SERVER=$SUBSYS:"
+
+   # If it is already running, do not start again
+   local _rc=$(check_process_ports $SERVER_FINGERPRINT)
+   case ${_rc} in
+      0)
+         ;;
+      *)
+         echo_failure
+         echo -n "**SERVER=${SUBSYS} already running**"
+         exit 255
+         ;;
+   esac
+   # JBOSS_WAY
+#   if [ -f $JBOSS_PIDFILE ]; then
+#    read ppid < $JBOSS_PIDFILE
+#    if [ `ps --pid $ppid 2> /dev/null | grep -c $ppid 2> /dev/null` -eq '1' ]; then
+#      echo -n "$SUBSYS is already running"
+#      echo_failure
+#      echo
+#      return 1
+#    else
+#      rm -f $JBOSS_PIDFILE
+#    fi
+#  fi
+
+   # Check for whoami
+   _user=$(whoami)
+   if [[ "$_user" == "${JBOSS_USER}" ]]
+   then
+      echo "**User ${JBOSS_USER} can not run this script**"
+      echo_failure
+      exit 255
+   else
+      if [ ! -z "$JBOSS_USER" ]; then
+        if [ -r /etc/rc.d/init.d/functions ]; then
+          # TODO: Check that in Fedora, runuser in daemon can not be run by non root users, so only
+          daemon --user $JBOSS_USER LAUNCH_JBOSS_IN_BACKGROUND=1 JBOSS_PIDFILE=$JBOSS_PIDFILE $JBOSS_SCRIPT -c $JBOSS_CONFIG -Djboss.instance.Name=${SUBSYS} 2>&1 > $JBOSS_CONSOLE_LOG &
+        else
+          su - $JBOSS_USER -c "LAUNCH_JBOSS_IN_BACKGROUND=1 JBOSS_PIDFILE=$JBOSS_PIDFILE $JBOSS_SCRIPT -c $JBOSS_CONFIG -Djboss.instance.Name=${SUBSYS}" 2>&1 > $JBOSS_CONSOLE_LOG &
+        fi
+      fi
+   fi
+
+#   _user=$(whoami)
+#   if [[ "$_user" == "${JBOSS_USER}" ]]
+#   then
+#      echo '**User ${JBOSS_USER} can not run this script**'
+#      echo_failure
+#      exit 255
+#   else
+#      if [[ "$_user" == "root" ]]
+#      then
+#         su ${JBOSS_USER} -c "cat < ${pipe_logfile} > ${start_logfile} &"
+#         su ${JBOSS_USER} -c "${wls_domain_home}/bin/startManagedWebLogic.sh ${server_name} &>${pipe_logfile} &"
+#         # Write pid to pidfile
+#         sleep 1
+#         wls_pid=$(pgrep -f $SERVER_FINGERPRINT)
+#         su ${JBOSS_USER} -c "echo $wls_pid > ${JBOSS_PIDFILE}"
+#         touch /var/lock/subsys/mesv6-managed-server
+#      else
+#         echo -n '**User '$_user' can not run this script**'
+#         echo_failure
+#         exit 255
+#      fi
+#   fi
+
+   # Wait to start
+   wait_to_start $SERVER_FINGERPRINT
+   echo ""
+   return 0
+}
+
+_OLD_stop() {
+  echo -n $"Stopping SERVER=$SUBSYS: "
+  count=0;
+
+  if [ -f $JBOSS_PIDFILE ]; then
+    read kpid < $JBOSS_PIDFILE
+    let kwait=$SHUTDOWN_WAIT
+
+    # Try issuing SIGTERM
+
+    kill -15 $kpid
+    until [ `ps --pid $kpid 2> /dev/null | grep -c $kpid 2> /dev/null` -eq '0' ] || [ $count -gt $kwait ]
+    do
+      sleep 1
+      let count=$count+1;
+    done
+
+    if [ $count -gt $kwait ]; then
+      kill -9 $kpid
+    fi
+  fi
+  rm -f $JBOSS_PIDFILE
+  success
+  echo
+}
+
+stop() {
+  set -x
+  echo -n $"Stopping: SERVER=${SUBSYS}"
+
+  if [ -f $JBOSS_PIDFILE ]; then
+    read kpid < $JBOSS_PIDFILE
+
+    wait_to_die $SERVER_FINGERPRINT
+    rm -f ${JBOSS_PIDFILE} > /dev/null 2>&1
+  fi
+
+  echo ''
+}
+
+# Old status relies on the correct existence of pid file, which might be ok
+#
+#
+_OLD_status() {
+  if [ -f $JBOSS_PIDFILE ]; then
+    read ppid < $JBOSS_PIDFILE
+    if [ `ps --pid $ppid 2> /dev/null | grep -c $ppid 2> /dev/null` -eq '1' ]; then
+      echo "$SUBSYS is running (pid $ppid)"
+      return 0
+    else
+      echo "$SUBSYS dead but pid file exists"
+      return 1
+    fi
+  fi
+  echo "$SUBSYS is not running"
+  return 3
+}
+
+#
+#
+#
+status () {
+   echo ''
+
+   echo -n " ${SUBSYS} status: "
+   echo_process_status $SERVER_FINGERPRINT
+   echo ''
+}
+
+
+# We set the RETVAL to know where it exited
+# RETVAL values
+RETVAL_INVALID_OPTION=1
+#
+RETVAL=0
+case "$1" in
+  start)
+      check_permissions
+      start
+      status
+      ;;
+  stop)
+      check_permissions
+      stop
+      status
+      ;;
+  restart)
+      check_permissions
+      stop
+      start
+      status
+      ;;
+  status)
+      status
+      ;;
+  forcestop)
+      wait_to_die $SERVER_FINGERPRINT 0
+      ;;
+  pid)
+      echo_pid $SERVER_FINGERPRINT
+      ;;
+  *)
+      ## If no parameters are given, print which are avaiable.
+      echo "Usage: $0 {start|stop|status|restart|forcestop|pid}"
+      RETVAL=$RETVAL_INVALID_OPTION
+      ;;
+esac
+exit $RETVAL
