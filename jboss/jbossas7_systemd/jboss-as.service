@@ -1,0 +1,22 @@
+# Copy this file into /etc/systemd/system/jboss-as.service modifying the values to your install
+# 
+# systemct daemon-reload
+# systemctl start jboss-as.service
+# systemctl status jboss-as.service
+# systemctl enable jboss-as.service
+#
+[Unit]
+Description=JBoss Application Server
+After=syslog.target network.target
+
+[Service]
+Type=forking
+# PIDFile=/var/run/jboss-as.pid
+EnvironmentFile=/etc/jboss-as/jboss-as.conf
+ExecStart=/usr/share/jboss-as/bin/init.d/jboss-as-standalone.sh start
+ExecStop=/usr/share/jboss-as/bin/init.d/jboss-as-standalone.sh stop
+
+
+[Install]
+WantedBy=multi-user.target
+
