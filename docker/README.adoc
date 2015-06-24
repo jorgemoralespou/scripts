@@ -1,0 +1,5 @@
+= Docker aliases and functions
+
+This is a set of common used aliases and functions that I use with docker.
+
+To use it, just source this file in your .bashrc or .bash_aliases
