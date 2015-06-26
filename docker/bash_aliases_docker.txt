@@ -78,9 +78,17 @@ function docker-tree () {
 }
 
 
-#Stop all containers
+#Build docker image in current directory
 function docker-build() {
     local tag=$1
     [ -z "$1" ] && echo "you must specify the tag" && return 0
     docker build --rm -t $tag .
+}
+
+
+# Print contents of json file in pretty print format
+function json-print() {
+   local file=$1
+   shift
+   cat ${file} | python -m json.tool $@
 }
