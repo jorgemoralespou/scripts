@@ -70,6 +70,25 @@ function ocdiagnose_pod_test_create_pod() # Create a test pod
    cat $TESTPOD | oc create -f - 
 }
 
+function ocdiagnose_networking_check_registry_healthz() # It will test on a remote host connectivity with the registry in case of pod building failures. $FUNCNAME <hostname>
+{
+   local help="It will test on a remote host connectivity with the registry in case of pod building failures. $FUNCNAME <hostname>"
+   [ "$1" == "-?" ] && echo $help && return 1
+
+   [ -z "$1" ] && echo "You must specify a remote host to test connectivity with the registry" && return 0
+   local _remote=$1
+
+   local _registry_pod=$(oc get pods | grep docker-registry | awk '{print $1}')
+   local _ip=$(oc describe pod $_registry_pod | grep IP | awk '{print $2}')
+
+   echo "Now it will execute the following command in the node where the builder is failing ${_remote}"
+   echo "    curl ${_ip}:5000/healthz"
+   echo ""
+   ssh root@${_remote} "curl -s ${_ip}:5000/healthz"
+   echo ""
+   echo "If there is an answer, the registry is accesible, otherwise there is a connectivity problem. Try fixing the iptables for the node (ocdiagnose_networking_fix_node_iptables)"
+
+}
 
 function ocdiagnose_networking_fix_node_iptables() # Restarts openshift-node process making sure that the linux bridge is totally recreated
 {
