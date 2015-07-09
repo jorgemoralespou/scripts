@@ -1,0 +1,80 @@
+#!/bin/bash
+
+#
+# Diagnose functions for OpenShift v3.
+#
+# source this script and then use any of the available functions
+#
+# every function should:
+#   - provide a description message with -?
+#   - validate correct number of params
+#   - start with ocdiagnose_ name
+#   - have a description of what it does after the function name. Braces should be on the following line
+#
+#
+
+TESTPOD="$(<<EOF
+{
+    "kind": "Pod",
+    "apiVersion": "v1",
+    "metadata": {
+        "name": "test-pod-2",
+    },
+    "spec": {
+        "containers": [{
+                "name": "test-container",
+                "image": "gcr.io/google_containers/busybox",
+                "command": [ "/bin/sh", "-c", "ping 192.168.146.141" ]
+            }],
+        "restartPolicy": "Never"
+    }
+}
+EOF
+)"
+
+function ocdiagnose()  # Shows all the ocdiagnose functions
+{
+   local help="Shows all the ocdiagnose functions"
+
+   [ "$1" == "-?" ] && echo $help && return 1
+
+   grep "^function" ${BASH_SOURCE[0]} | sort | cut -d' ' -f 2- | awk 'BEGIN { FS = "#" }; { print $1"\n\t"$2 }'
+}
+
+function ocdiagnose_router_access_url() # Access a url from the router pod. $FUNCNAME <url>
+{
+   local help="Access a url from the router pod. $FUNCNAME <url>"
+
+   [ -z "$1" ] && echo "you must specify a url to query from the router pod" && return 0
+   [ "$1" == "-?" ] && echo $help && return 1
+
+   local _url=$1
+   oc exec -p $(oc get pods | grep router | awk '{print $1}' | head -n 1) -- curl ${_url}
+}
+
+
+function ocdiagnose_router_view_routes() # Show the routes in the router pod.
+{
+   local help="Show the routes in the router pod."
+   [ "$1" == "-?" ] && echo $help && return 1
+
+   oc exec -p $(oc get pods | grep router | awk '{print $1}' | head -n 1) -- cat  /var/lib/containers/router/routes.json
+}
+
+
+function ocdiagnose_pod_test_create_pod() # Create a test pod
+{
+   local help="Create a test pod."
+   [ "$1" == "-?" ] && echo $help && return 1
+
+   cat $TESTPOD | oc create -f - 
+}
+
+
+function ocdiagnose_networking_fix_node_iptables() # Restarts openshift-node process making sure that the linux bridge is totally recreated
+{
+   local help="Restarts openshift-node process making sure that the linux bridge is totally recreated"
+   [ "$1" == "-?" ] && echo $help && return 1
+
+   ip link set lbr0 down && ip link del lbr0 && systemctl restart openshift-node
+}
