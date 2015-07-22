@@ -1,29 +1,26 @@
-
-
-
 #Remove all untagged images (<none>)
-function docker-rmi-none() {
+docker-rmi-none() {
     # docker rmi $(docker images | grep none | awk '{print $3}');
     docker rmi $(docker images -f "dangling=true" -q)
 }
 
 #Remove all containers
-function docker-rm-all() {
+docker-rm-all() {
     docker rm -vf $(docker ps -aq)
 }
 
-function docker-rm-exited() {
+docker-rm-exited() {
     docker rm -vf $(docker ps -aqf "status=exited")
 }
 
 #Stop all containers
-function docker-stop-all() {
+docker-stop-all() {
     docker stop $(docker ps -q)
 }
 
 #Run a container
 #If CMD is not provided, uses bash, adds name in format tmp$NUMBER_OF_RUNNING_TMP_CONTS
-function dr() {
+dr() {
     cmd="bash"
     image=$1
     [ $# -ge 2 ] && shift && cmd=$@
@@ -33,7 +30,7 @@ function dr() {
 }
 
 #Call docker load. If the image is not specified by path, use default directory
-function dl() {
+dl() {
     local path=$1
     local DEFAULT_PATH="${HOME}/devel/brew/"
     [[ "${path}" =~ ^.*/.*$ ]] || path=${DEFAULT_PATH}${path}
@@ -43,7 +40,7 @@ function dl() {
 
 #Docker exec
 #Use bash as a default CMD, if no container is specified, use last container from docker ps list
-function de() {
+de() {
     local cmd=bash
     local container=$1
     [ -z "$1" ] && container=$(docker ps | tail -1 | awk '{print $1}')
@@ -54,7 +51,7 @@ function de() {
 
 #Docker inspect/ip
 #Get an IP address of a container - if no container is specified, use last container from docker ps list
-function di() {
+di() {
     local container=$1
     [ -z "$1" ] && container=$(docker ps | tail -1 | awk '{print $1}')
     [ "$container" == "CONTAINER" ] && >&2 echo "No running container" && return 0
@@ -63,7 +60,7 @@ function di() {
 
 #Docker kill
 #Kill the specified container, if no container is specified, use last container from docker ps list
-function dk() {
+dk() {
     local container=$1
     [ -z "$1" ] && container=$(docker ps | tail -1 | awk '{print $1}')
     [ "$container" == "CONTAINER" ] && >&2 echo "No running container" && return 0
@@ -72,14 +69,14 @@ function dk() {
 
 # Docker tree
 # Shows all the process tree associated with the docker daemon 
-function docker-tree () {
+docker-tree () {
    local DOCKER_PID=$(ps -fax | grep /usr/bin/docker | grep -v grep | awk '{ print $1}')
    ps f -p $(pstree -p $DOCKER_PID | sed 's/(/\n(/g' | grep '(' | sed 's/(\(.*\)).*/\1/' | tr "\n" " ")
 }
 
 
 #Build docker image in current directory
-function docker-build() {
+docker-build() {
     local tag=$1
     [ -z "$1" ] && echo "you must specify the tag" && return 0
     docker build --rm -t $tag .
@@ -87,8 +84,11 @@ function docker-build() {
 
 
 # Print contents of json file in pretty print format
-function json-print() {
+json-print() {
    local file=$1
    shift
    cat ${file} | python -m json.tool $@
 }
+
+alias dockercleanup='docker rm $(docker ps -a | awk '\''/Exited/ { print $1 }'\'')'
+alias dockerimagesdf='docker images | awk '\''/MB/ { SUM += $7 } END { print SUM }'\'''
