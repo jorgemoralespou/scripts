@@ -1,94 +1,199 @@
+#!/bin/bash
+
+#
+# Docker aliases and functions.
+#
+# source this script and then use any of the available functions
+#
+# every function should:
+#   - provide a description message with -?
+#   - validate correct number of params
+#   - have a description of what it does after the function name. Braces should be on the following line
+#
+#
 
 
+function docker-aliases()  # Shows all the docker aliases functions
+{
+   local help="Shows all the ocdiagnose functions"
 
-#Remove all untagged images (<none>)
-function docker-rmi-none() {
-    # docker rmi $(docker images | grep none | awk '{print $3}');
-    docker rmi $(docker images -f "dangling=true" -q)
-}
+   [ "$1" == "-?" ] && echo $help && return 1
 
-#Remove all containers
-function docker-rm-all() {
-    docker rm -vf $(docker ps -aq)
-}
-
-function docker-rm-exited() {
-    docker rm -vf $(docker ps -aqf "status=exited")
-}
-
-#Stop all containers
-function docker-stop-all() {
-    docker stop $(docker ps -q)
-}
-
-#Run a container
-#If CMD is not provided, uses bash, adds name in format tmp$NUMBER_OF_RUNNING_TMP_CONTS
-function dr() {
-    cmd="bash"
-    image=$1
-    [ $# -ge 2 ] && shift && cmd=$@
-    run="docker run --name tmp$(docker ps -a | grep tmp | wc -l)  -it --rm $image $cmd"
-    echo $run
-    $run
-}
-
-#Call docker load. If the image is not specified by path, use default directory
-function dl() {
-    local path=$1
-    local DEFAULT_PATH="${HOME}/devel/brew/"
-    [[ "${path}" =~ ^.*/.*$ ]] || path=${DEFAULT_PATH}${path}
-
-    docker load -i ${path}
-}
-
-#Docker exec
-#Use bash as a default CMD, if no container is specified, use last container from docker ps list
-function de() {
-    local cmd=bash
-    local container=$1
-    [ -z "$1" ] && container=$(docker ps | tail -1 | awk '{print $1}')
-    [ "$container" == "CONTAINER" ] && >&2 echo "No running container" && return 0
-    [ $# -ge 2 ] && shift && cmd=$@
-    docker exec -it $container $cmd
-}
-
-#Docker inspect/ip
-#Get an IP address of a container - if no container is specified, use last container from docker ps list
-function di() {
-    local container=$1
-    [ -z "$1" ] && container=$(docker ps | tail -1 | awk '{print $1}')
-    [ "$container" == "CONTAINER" ] && >&2 echo "No running container" && return 0
-    docker inspect $container | jq -r .[0].NetworkSettings.IPAddress
-}
-
-#Docker kill
-#Kill the specified container, if no container is specified, use last container from docker ps list
-function dk() {
-    local container=$1
-    [ -z "$1" ] && container=$(docker ps | tail -1 | awk '{print $1}')
-    [ "$container" == "CONTAINER" ] && >&2 echo "No running container" && return 0
-    docker kill $container
-}
-
-# Docker tree
-# Shows all the process tree associated with the docker daemon 
-function docker-tree () {
-   local DOCKER_PID=$(ps -fax | grep /usr/bin/docker | grep -v grep | awk '{ print $1}')
-   ps f -p $(pstree -p $DOCKER_PID | sed 's/(/\n(/g' | grep '(' | sed 's/(\(.*\)).*/\1/' | tr "\n" " ")
+   grep "^function" ${BASH_SOURCE[0]} | sort | cut -d' ' -f 2- | awk 'BEGIN { FS = "#" }; { print $1"\n\t"$2 }'
 }
 
 
-#Build docker image in current directory
-function docker-build() {
-    local tag=$1
-    [ -z "$1" ] && echo "you must specify the tag" && return 0
-    docker build --rm -t $tag .
+
+function docker-rmi-none() # Remove all untagged images (<none>)
+{
+   local help="Remove all untagged images (<none>)"
+
+   [ "$1" == "-?" ] && echo $help && return 1
+   [ ! -f /var/run/docker.pid ] && echo "Docker is not running" && return 2
+
+   # docker rmi $(docker images | grep none | awk '{print $3}');
+   local _dangling=$(docker images -f "dangling=true" -q)
+   [ "" != "${_dangling}" ] && docker rmi ${_dangling}
 }
 
 
-# Print contents of json file in pretty print format
-function json-print() {
-   local file=$1
+function docker-rm-all() # Remove all containers
+{
+   local help="Remove all containers"
+
+   [ "$1" == "-?" ] && echo $help && return 1
+   [ ! -f /var/run/docker.pid ] && echo "Docker is not running" && return 2
+
+
+   local _all=$(docker ps -aq)
+   [ "" != "${_all}" ] && docker rm -vf ${_all}
+}
+
+
+function docker-rm-exited() # Remove all exited containers
+{
+   local help="Remove all exited containers"
+
+   [ "$1" == "-?" ] && echo $help && return 1
+   [ ! -f /var/run/docker.pid ] && echo "Docker is not running" && return 2
+
+   local _exited=$(docker ps -aqf "status=exited")
+   [ "" != "${_exited}" ] && docker rm -vf ${_exited}
+}
+
+
+function docker-stop-all() # Stop all containers
+{
+   local help="Stop all containers"
+
+   [ "$1" == "-?" ] && echo $help && return 1
+   [ ! -f /var/run/docker.pid ] && echo "Docker is not running" && return 2
+
+   local _all=$(docker ps -aq)
+   [ "" != "${_all}" ] && docker stop $(_all)
+}
+
+function dr() # Run a container (with --rm). If CMD is not provided, uses bash, adds name in format tmp$NUMBER_OF_RUNNING_TMP_CONTS
+{
+   local help="Run a container. If CMD is not provided, uses bash, adds name in format tmp$NUMBER_OF_RUNNING_TMP_CONTS"
+
+   [ "$1" == "-?" ] && echo $help && return 1
+   [ ! -f /var/run/docker.pid ] && echo "Docker is not running" && return 2
+
+   local _cmd="bash"
+   local _image=$1
+   [ $# -ge 2 ] && shift && cmd=$@
+   run="docker run --name tmp$(docker ps -a | grep tmp | wc -l) -it --rm $_image $_cmd"
+   echo $run
+   $run
+}
+
+
+function dl() # docker load [PATH]. If the image is not specified by path, use default ${HOME}
+{
+   local help="Call docker load. If the image is not specified by path, use default directory"
+
+   [ "$1" == "-?" ] && echo $help && return 1
+   [ ! -f /var/run/docker.pid ] && echo "Docker is not running" && return 2
+   [ -z "$1" ] && echo "Path for the image to load is required" && return 3
+
+   local _path=$1
+   local _DEFAULT_PATH="${HOME}"
+   [[ "${_path}" =~ ^.*/.*$ ]] || _path=${_DEFAULT_PATH}${_path}
+
+   docker load -i ${_path}
+}
+
+
+
+function de() # docker exec [CONTAINER] [CMD]. Use bash as a default CMD, if no container is specified, use last container from docker ps list
+{
+   local help="Use bash as a default CMD, if no container is specified, use last container from docker ps list"
+
+   [ "$1" == "-?" ] && echo $help && return 1
+   [ ! -f /var/run/docker.pid ] && echo "Docker is not running" && return 2
+
+   local _cmd=bash
+   local _container=$1
+   [ -z "$1" ] && _container=$(docker ps | tail -1 | awk '{print $1}')
+   [ "$_container" == "CONTAINER" ] && >&2 echo "No running container" && return 0
+   [ $# -ge 2 ] && shift && _cmd=$@
+   docker exec -it $_container $_cmd
+}
+
+
+function di() # docker inspect/ip [CONTAINER]. Get an IP address of a container - if no container is specified, use last container from docker ps list
+{
+   local help="Get an IP address of a container - if no container is specified, use last container from docker ps list"
+
+   [ "$1" == "-?" ] && echo $help && return 1
+   [ ! -f /var/run/docker.pid ] && echo "Docker is not running" && return 2
+
+   local _container=$1
+   [ -z "$1" ] && _container=$(docker ps | tail -1 | awk '{print $1}')
+   [ "$_container" == "CONTAINER" ] && >&2 echo "No running container" && return 0
+   docker inspect $_container | jq -r .[0].NetworkSettings.IPAddress
+}
+
+function dk() # docker kill [CONTAINER]. Kill the specified container, if no container is specified, use last container from docker ps list
+{
+   local help="Kill the specified container, if no container is specified, use last container from docker ps list"
+
+   [ "$1" == "-?" ] && echo $help && return 1
+   [ ! -f /var/run/docker.pid ] && echo "Docker is not running" && return 2
+
+   local _container=$1
+   [ -z "$1" ] && _container=$(docker ps | tail -1 | awk '{print $1}')
+   [ "$_container" == "CONTAINER" ] && >&2 echo "No running container" && return 0
+   docker kill $_container
+}
+
+
+function docker-tree () # Docker tree. Shows all the process tree associated with the docker daemon 
+{
+   local help="Shows all the process tree associated with the docker daemon"
+
+   [ "$1" == "-?" ] && echo $help && return 1
+   [ ! -f /var/run/docker.pid ] && echo "Docker is not running" && return 2
+
+   # local _DOCKER_PID=$(ps -fax | grep /usr/bin/docker | grep -v grep | awk '{ print $1}')
+   local _DOCKER_PID=$(cat /var/run/docker.pid)
+   ps f -p $(pstree -p $_DOCKER_PID | sed 's/(/\n(/g' | grep '(' | sed 's/(\(.*\)).*/\1/' | tr "\n" " ")
+}
+
+
+function docker-build() # Build docker image in current directory with spacified TAG
+{
+   local help="Build docker image in current directory"
+
+   [ "$1" == "-?" ] && echo $help && return 1
+   [ ! -f /var/run/docker.pid ] && echo "Docker is not running" && return 2
+   [ ! -e ./Dockerfile ] && echo "There is no Dockerfile in current directory" && return 3
+
+   local _tag=$1
+   [ -z "$_tag" ] && echo "you must specify the tag" && return 0
+   docker build --rm -t $_tag .
+}
+
+
+
+function json-print() # Print contents of json file in pretty print format with specified [FILE]
+{
+   local help="Print contents of json file in pretty print format"
+
+   [ "$1" == "-?" ] && echo $help && return 1
+
+   local _file=$1
    shift
-   cat ${file} | python -m json.tool $@
+   cat ${_file} | python -m json.tool $@
+}
+
+
+function docker-images-df() # Prints the ammount of disc used by images. Needs root.
+{ 
+   local help="Prints the ammount of disc used by images. Needs root"
+
+   [ "$1" == "-?" ] && echo $help && return 1
+
+   sudo du -sm /var/lib/docker/devicemapper
 }

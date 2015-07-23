@@ -3,3 +3,15 @@
 This is a set of common used aliases and functions that I use with docker.
 
 To use it, just source this file in your .bashrc or .bash_aliases
+
+
+----
+# Docker aliases and functions.
+#
+# source this script and then use any of the available functions
+#
+# every function should:
+#   - provide a description message with -?
+#   - validate correct number of params and constraints
+#   - have a description of what it does after the function name. Braces should be on the following line
+----
