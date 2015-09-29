@@ -7,7 +7,7 @@
 #
 # every function should:
 #   - provide a description message with -?
-#   - validate correct number of params
+#   - validate correct number of params and constraints
 #   - have a description of what it does after the function name. Braces should be on the following line
 #
 #

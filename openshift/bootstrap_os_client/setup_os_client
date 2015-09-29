@@ -1,0 +1,93 @@
+#!/bin/bash
+#
+# This script sets up the appropriate links to change between different OpenShift client versions
+# OpenShift can be Origin or OpenShift Enterprise
+# The script expects to have symlinks in /usr/local/bin to a local bootstrap folder for the binaries
+# In the bootstrap folder, there will be also symlinks to the actual correct binary. 
+# This is done like this so there is no need to run this script as root on a regular basis.
+# Folder structure will be:
+#  ./
+#    ose-3.0.0/oc
+#    ose-3.0.1/oc
+#    ...
+#    origin-1.0.4/[oc,oadm,openshift]
+#    origin-1.0.5/[oc,oadm,openshift]
+#    ...
+#    bootstrap/[oc,oadm,openshift] 
+#
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+function usage(){
+   echo "Set links in /usr/local/bin for OpenShift (Enterprise or Origin)."
+   echo ""
+   echo "Usage:"
+   echo "  $0 ose|origin version"
+   echo ""
+   echo "Examples:"
+   echo "   $0 ose 3.0.0"
+   echo "   $0 origin 1.0.6"
+}
+
+# Sets links to origin client binaries
+#
+# Args:
+#   $1: version
+#
+#
+function origin(){
+   echo "Setting up origin"
+   
+   local _version="origin-$1"
+   [ ! -d "${DIR}/$_version" ] && echo "Directory for client (${_version}) does not exist in $DIR" && exit 10
+   
+   for exe in oc oadm openshift
+   do 
+      rm ${DIR}/bootstrap/${exe}
+      ln -s ${DIR}/${_version}/${exe} ${DIR}/bootstrap/${exe} 
+      echo "Link for $exe $_version created"
+   done
+}
+
+# Sets links to origin client binaries
+#
+# Args:
+#   $1: version
+#
+#
+function ose(){
+   echo "Setting up ose"
+   
+   local _version="ose-$1"
+   [ ! -d "${DIR}/$_version" ] && echo "Directory for client (${_version}) does not exist in $DIR" && exit 10
+   
+   for exe in oc oadm openshift
+   do 
+      rm ${DIR}/bootstrap/${exe}
+      ln -s ${DIR}/${_version}/oc ${DIR}/bootstrap/${exe} 
+      echo "Link for $exe $_version created"
+   done
+}
+
+[ "$1" == "-?" ] && usage && exit 1
+[ $# -ne 2 ] && usage && exit 1
+
+
+# Check pre-requisites.
+[ ! -d ${DIR}/bootstrap ] && mkdir -p $DIR/bootstrap && echo "Created bootstrap dir at $DIR/bootstrap"
+[ ! -f ${DIR}/bootstrap/oc ] && touch $DIR/bootstrap/oc && echo "Created bootstrap oc"
+[ ! -f ${DIR}/bootstrap/oadm ] && touch $DIR/bootstrap/oadm && echo "Created bootstrap oadm"
+[ ! -f ${DIR}/bootstrap/openshift ] && touch $DIR/bootstrap/openshift && echo "Created bootstrap openshift"
+
+[ ! -L /usr/local/bin/oc ] && echo "You must: sudo ln -s ${DIR}/bootstrap/oc /usr/local/bin/oc" && exit 2
+[ ! -L /usr/local/bin/oadm ] && echo "You must: sudo ln -s ${DIR}/bootstrap/oadm /usr/local/bin/oadm" && exit 2
+[ ! -L /usr/local/bin/openshift ] && echo "You must: sudo ln -s ${DIR}/bootstrap/openshift /usr/local/bin/openshift" && exit 2
+
+if [ "$1" == "ose" ]; then
+   ose $2
+elif [ "$1" == "origin" ]; then
+   origin $2
+else
+   usage
+   exit 3 
+fi 
